@@ -1,43 +1,61 @@
-from telethon import TelegramClient, events
+import logging
+from telegram import Update
+from telegram.ext import Updater, MessageHandler, Filters, CallbackContext
+
+# --- Configuration ---
 import os
+BOT_TOKEN = os.environ.get("BOT_TOKEN")  # Use environment variable for security
+ALLOWED_USERS = {8040038495}  # Your Telegram user ID
 
-API_ID = int(os.environ['API_ID'])
-API_HASH = os.environ['API_HASH']
-BOT_TOKEN = os.environ['BOT_TOKEN']
+# --- Logging Setup ---
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
+logger = logging.getLogger(__name__)
 
-# सिर्फ आप ही बॉट इस्तेमाल कर सकें
-ALLOWED_USERS = [8040038495]  # ← यहाँ अपना Telegram ID डालें
+# --- Handler Function ---
+def file_handler(update: Update, context: CallbackContext) -> None:
+    user_id = update.effective_user.id
+    if user_id not in ALLOWED_USERS:
+        logger.warning(f"Unauthorized access attempt by user {user_id}")
+        return
 
-# Session file बनाएगा ताकि बार-बार login न करना पड़े
-client = TelegramClient("bot_session", API_ID, API_HASH)
+    message = update.message
+    file = (
+        message.document or
+        message.video or
+        message.audio or
+        (message.photo[-1] if message.photo else None)
+    )
 
-async def main():
-    await client.start(bot_token=BOT_TOKEN)
+    if not file:
+        message.reply_text("❗ Please send a file (document, video, audio, or photo).")
+        return
 
-    @client.on(events.NewMessage(incoming=True))
-    async def handler(event):
-        try:
-            await event.reply(f"🧾 Your Telegram ID: `{event.sender_id}`")
+    try:
+        telegram_file = context.bot.get_file(file.file_id)
+        direct_link = telegram_file.file_path
+        message.reply_text(
+            f"✅ Direct download link (valid ~1 hour):\n{direct_link}"
+        )
+        logger.info(f"Sent direct link to user {user_id}: {direct_link}")
+    except Exception as e:
+        logger.error(f"Error generating link: {e}")
+        message.reply_text("❌ An error occurred while processing your file.")
 
-            if event.sender_id not in ALLOWED_USERS:
-                await event.reply("🚫 You are not authorized to use this bot.")
-                return
+def main():
+    updater = Updater(BOT_TOKEN, use_context=True)
+    dp = updater.dispatcher
 
-            if event.file:
-                await event.reply("🔗 Generating link…")
-                path = await event.download_media()
-                if path:
-                    await event.reply(f"✅ Direct link:\n`{path}`")
-                else:
-                    await event.reply("❌ File not downloaded.")
-            else:
-                await event.reply("❌ Please send a file.")
+    dp.add_handler(MessageHandler(
+        Filters.document | Filters.video | Filters.audio | Filters.photo,
+        file_handler
+    ))
 
-        except Exception as e:
-            await event.reply(f"❌ Error:\n{str(e)}")
+    logger.info("Bot started. Listening for files...")
+    updater.start_polling()
+    updater.idle()
 
-    print("🤖 Bot is running...")
-    await client.run_until_disconnected()
-
-import asyncio
-asyncio.run(main())
+if __name__ == '__main__':
+    main()
